@@ -863,14 +863,14 @@ async def send_loading_and_wait(update: Update, context: ContextTypes.DEFAULT_TY
         "⏳ <b>Lokatsiya aniqlanmoqda...</b>\n\nBiroz kuting 🙏",
     ]
     try:
-        lm = await context.bot.send_message(chat_id=chat_id, text=frames[0], parse_mode="HTML")
+        lm = await context.bot.send_message(chat_id=chat_id, text=frames[0])
         context.user_data["loading_msg_id"] = lm.message_id
         for frame in frames[1:]:
             await asyncio.sleep(1.2)
             try:
                 await context.bot.edit_message_text(
                     chat_id=chat_id, message_id=lm.message_id,
-                    text=frame, parse_mode="HTML"
+                    text=frame
                 )
             except BadRequest:
                 pass
