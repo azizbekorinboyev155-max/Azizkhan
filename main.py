@@ -647,6 +647,9 @@ RELAY_CONNECTIONS: dict[int, dict] = {}
 # Admin rad etish jarayoni: {admin_tg_id: {"table": ..., "tg_id": ..., "msg_id": ...}}
 PENDING_REJECT: dict[int, dict] = {}
 
+# ── YANGI: har bir arizaning admin paneldagi xabar ID'si (sinxronlash uchun) ──
+ADMIN_ARIZA_MSG: dict[int, int] = {}
+
 STICKER_WELCOME  = "CAACAgIAAxkBAAIBqmVx9VsQpL3HjXRzQnbLU8XJi3lRAAIFAANWnb0KjTVDjVfSe-AeBA"
 STICKER_MIJOZ    = "CAACAgIAAxkBAAIBrGVx9VwTqMoxoYRQDGvLf0IqkwOVAAIGAANWnb0KbC5_fAJ7HMYeBA"
 STICKER_USTA     = "CAACAgIAAxkBAAIBrmVx9V1aQ3sPYVQ_a3dLRdVQhx8TAAIHAANW"
@@ -907,16 +910,68 @@ async def send_sticker_safe(update, sticker_id):
 async def send_to_admin(context, text: str, ariza_id: int = None,
                         reply_markup=None):
     if not ADMIN_CHAT_ID:
-        return
+        return None
     try:
         kb = reply_markup if reply_markup else (status_kb(ariza_id) if ariza_id else None)
-        await context.bot.send_message(
+        msg = await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID, text=text,
             parse_mode="HTML", disable_web_page_preview=True,
             reply_markup=kb
         )
+        return msg
     except Exception as e:
         logger.error(f"Admin xabar xatosi: {e}")
+        return None
+
+async def sync_admin_ariza(context: ContextTypes.DEFAULT_TYPE, ariza_id: int, status_label: str):
+    """Usta/CC/Evakuator tugma bosganda — admin paneldagi ORIGINAL ariza xabarini yangilaydi."""
+    msg_id = ADMIN_ARIZA_MSG.get(ariza_id)
+    if not msg_id or not ADMIN_CHAT_ID:
+        return
+    try:
+        msg = await context.bot.forward_message(
+            chat_id=ADMIN_CHAT_ID, from_chat_id=ADMIN_CHAT_ID, message_id=msg_id
+        )
+        await context.bot.delete_message(chat_id=ADMIN_CHAT_ID, message_id=msg.message_id)
+    except Exception:
+        pass
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=ADMIN_CHAT_ID, message_id=msg_id,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"📌 Holat: {status_label}", callback_data="noop")],
+                [InlineKeyboardButton("🧑‍🔧 Expert usta yuborish", callback_data=f"st_{ariza_id}_expert")],
+            ])
+        )
+    except Exception as e:
+        logger.error(f"Admin panel sync xato ({ariza_id}): {e}")
+
+async def sync_admin_ariza(context: ContextTypes.DEFAULT_TYPE, ariza_id: int, status_label: str):
+    """Usta/CC/Evakuator tugma bosganda — admin paneldagi ORIGINAL ariza xabari tugmasini yangilaydi."""
+    msg_id = ADMIN_ARIZA_MSG.get(ariza_id)
+    if not msg_id or not ADMIN_CHAT_ID:
+        return
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=ADMIN_CHAT_ID, message_id=msg_id,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"📌 Holat: {status_label}", callback_data="noop")],
+                [InlineKeyboardButton("🧑‍🔧 Expert usta yuborish", callback_data=f"st_{ariza_id}_expert")],
+            ])
+        )
+    except Exception as e:
+        logger.error(f"Admin panel sync xato ({ariza_id}): {e}")
+        pass
+    try:
+        await context.bot.edit_message_reply_markup(
+            chat_id=ADMIN_CHAT_ID, message_id=msg_id,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"📌 Holat: {status_label}", callback_data="noop")],
+                [InlineKeyboardButton("🧑‍🔧 Expert usta yuborish", callback_data=f"st_{ariza_id}_expert")],
+            ])
+        )
+    except Exception as e:
+        logger.error(f"Admin panel sync xato ({ariza_id}): {e}")
 
 def progress_bar(current: int, total: int) -> str:
     return f"{'🟩'*current}{'⬜'*(total-current)} {current}/{total}"
@@ -1262,12 +1317,6 @@ async def mij_mashina(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "tasdiqlanganda ishlatiladi. Hech kim ko'ra olmaydi.\n\n"
         "📌 <b>Namuna:</b> <code>8600 1234 5678 9012</code>\n"
         "<i>Hozircha qo'shmaslik uchun «yo'q» deb yozing — keyinroq qo'sha olasiz</i>",
-        "Karta raqamingiz faqat xizmat to'lovlarini tez va xavfsiz amalga oshirish uchun ishlatiladi. "
-        "Bu ma'lumot hech kimga oshkor qilinmaydi — platforma to'lovni faqat siz tasdiqlagan "
-        "taqdirdagina amalga oshiradi. Qo'shimcha yechim — to'lov xizmat tugagandan so'ng "
-        "operatorimiz orqali ham amalga oshirilishi mumkin.\n\n"
-        "📌 <i>Masalan:</i> <code>8600 1234 5678 9012</code>\n"
-        "<i>Yoki hozircha o'tkazib yuborish uchun «yo'q» deb yozing</i>",
         parse_mode="HTML"
     )
     return MIJ_KARTA
@@ -1386,23 +1435,6 @@ async def muammo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "<i>«Xizmat sifati bo'yicha shikoyatim bor»</i>\n"
         "<i>«MOTUS xizmatlari haqida batafsil bilmoqchiman»</i>\n\n"
         "✏️ <i>Erkin yozavering — keyin qaysi xizmat kerakligini tanlaymiz</i>\n\n"
-        "✍️ Yozing 👇",
-        "<i>«Dvigatel isib ketmoqda, qora tutun chiqyapti»</i>\n"
-        "<i>«Tormoz tutmayapti, gidravlik suyuqligi oqyapti»</i>\n"
-        "<i>«Akkumulyator o'chdi, motor aylanmayapti»</i>\n"
-        "<i>«Podveska urib ketmoqda, g'alati tovush bor»</i>\n\n"
-        "🚛 <b>Yo'lda qolib ketsangiz — Evakuator kerak:</b>\n"
-        "<i>«Mashina yo'lda o'chib qoldi, harakatlanmayapti»</i>\n"
-        "<i>«Avariya bo'ldi, mashinani tortib ketish kerak»</i>\n"
-        "<i>«Shina portladi, ehtiyot g'ildirak yo'q, uzoqdaman»</i>\n\n"
-        "📞 <b>Umumiy savol — Operator yordam beradi:</b>\n"
-        "<i>«Xizmat narxlari qancha, kafolatlar bormi?»</i>\n"
-        "<i>«Qaysi ustaxona eng yaxshi reytingga ega?»</i>\n"
-        "<i>«Shartnoma yoki akt kerak bo'lsa nima qilaman?»</i>\n\n"
-        "💡 <b>MOTUS haqida taklif yoki fikr:</b>\n"
-        "<i>«Ilovangizga real-time kuzatuv qo'shilsa zo'r bo'lardi»</i>\n"
-        "<i>«Usta baholash tizimini yaxshilansa yaxshi bo'ladi»</i>\n\n"
-        "✏️ <i>Erkin yozavering — har qanday murojaat qabul qilinadi!</i>\n\n"
         "✍️ Yozing 👇",
         parse_mode="HTML",
         reply_markup=text_step_cancel_kb()
@@ -1607,7 +1639,9 @@ async def ariza_lokatsiya(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last:
         admin_text += f"🕓 <b>Oxirgi murojaat:</b> {last}\n"
     admin_text += f"\n{summary}"
-    await send_to_admin(context, admin_text, ariza_id=ariza_id)
+    admin_msg = await send_to_admin(context, admin_text, ariza_id=ariza_id)
+    if admin_msg:
+        ADMIN_ARIZA_MSG[ariza_id] = admin_msg.message_id
     # Ovozli xabar bo'lsa adminga alohida yuborish
     voice_id = d.get("ariza_voice_id")
     if voice_id:
@@ -1854,6 +1888,7 @@ async def usta_ariza_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"👤 <b>Usta:</b> {xodim_ism}\n"
             f"🕐 {datetime.now().strftime('%d.%m.%Y, soat %H:%M')}"
         )
+        await sync_admin_ariza(context, ariza_id, "🟡 Jarayonda")
 
     elif action == "bajarildi":
         update_status(ariza_id, "bajarildi")
@@ -1886,6 +1921,7 @@ async def usta_ariza_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"🕐 {now_str}\n\n"
             "Barcha tugmalar avtomatik o'chirildi."
         )
+        await sync_admin_ariza(context, ariza_id, "✅ Bajarildi")
 
         # Mijozga yakunlanish xabari + baholash
         ariza = get_ariza_full(ariza_id)
@@ -2041,6 +2077,10 @@ async def usta_izoh_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Admin ga yuborishda xato: {e}")
 
     await msg.reply_text(user_msg, parse_mode="HTML")
+    await sync_admin_ariza(
+        context, ariza_id,
+        "❌ Muammo bildirildi" if izoh_turi == "muammo" else "🧑‍🔧 Master so'raldi"
+    )
 
     if izoh_turi == "master" and cc_sent:
         context.application.bot_data[f"master_cc_{ariza_id}_{user_id}"] = cc_sent
@@ -2099,6 +2139,25 @@ async def admin_master_confirm_callback(update: Update, context: ContextTypes.DE
         )
     except Exception as e:
         logger.error(f"Ustaga master tasdiqlash: {e}")
+
+    # ── YANGI: mijozga ham xabar boradi ──
+    mijoz_tg_id = get_ariza_client(ariza_id)
+    if mijoz_tg_id:
+        try:
+            await context.bot.send_message(
+                chat_id=mijoz_tg_id,
+                text=(
+                    f"🧑‍🔧 <b>Master usta yo'lga chiqmoqda!</b>\n\n"
+                    f"Arizangiz #{ariza_id} bo'yicha qo'shimcha mutaxassis "
+                    "(master usta) tez orada sizning manzilingizga yo'naltirildi "
+                    "va tez orada yetib boradi.\n\n"
+                    f"🕐 {now_str}\n\n"
+                    "🌟 <b>MOTUS — Harakatni davom ettiramiz!</b>"
+                ),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Mijozga master tasdiqlash: {e}")
 
 # ══════════════════════════════════════════════════════════
 #  Lokatsiya yangilash (profil menyusida)
@@ -2256,10 +2315,6 @@ async def usta_tajriba(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤝 <b>Professional hamkorlik:</b> Karta ma'lumotlaringiz xizmat haqingizni "
         "kechikishlarsiz, to'liq va himoyalangan tizim orqali qabul qilishingizni ta'minlaydi.\n\n"
         "📌 <b>Namuna:</b> <code>8600 1234 5678 9012</code>",
-        "Siz bajargan har bir xizmat uchun to'lov bevosita shu kartangizga o'tkaziladi. "
-        "Platforma komissiyasi (5-10%) chegirib tashlanadi — qolgani sizniki. "
-        "Karta raqami shifrlangan holda saqlanadi va faqat to'lov uchun ishlatiladi.\n\n"
-        "📌 <i>Masalan:</i> <code>8600 1234 5678 9012</code>",
         parse_mode="HTML"
     )
     return USTA_KARTA
@@ -2417,9 +2472,6 @@ async def cc_tajriba(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "MOTUS moliya tizimi shaffof ishlaydi: har bir to'lov tarixi sizga ko'rinadi.\n\n"
         "🔒 Ma'lumot faqat HR bo'limi va moliya xizmati uchun — uchinchi tomonga berilmaydi.\n\n"
         "📌 <b>Namuna:</b> <code>8600 1234 5678 9012</code>",
-        "Oylik maoshingiz va bonuslar shu kartaga o'tkaziladi. "
-        "Ma'lumot xavfsiz saqlanadi va faqat HR bo'limi ko'rishi mumkin.\n\n"
-        "📌 <i>Masalan:</i> <code>8600 1234 5678 9012</code>",
         parse_mode="HTML"
     )
     return CC_KARTA
@@ -2575,9 +2627,6 @@ async def ev_tajriba(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔐 Naqd pul muammosi yo'q, xavfsiz to'lov tizimi orqali ishlaysiz. "
         "Har bir chaqiruv — kafolatlangan daromad.\n\n"
         "📌 <b>Namuna:</b> <code>8600 1234 5678 9012</code>",
-        "Har bir evakuatsiya xizmati uchun haq bevosita shu kartangizga o'tkaziladi. "
-        "Platforma xavfsiz to'lov tizimi orqali ishlaydi — naqd pul muammosi yo'q.\n\n"
-        "📌 <i>Masalan:</i> <code>8600 1234 5678 9012</code>",
         parse_mode="HTML"
     )
     return EV_KARTA
@@ -2909,9 +2958,12 @@ async def xodim_accept_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     f"📞 <b>Telefon:</b> <code>{xodim_tel}</code>\n"
                     f"📲 <b>Telegram:</b> {xodim_username}\n\n"
                     "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                    "📍 <b>Usta siz ko'rsatgan lokatsiyada sizni kutmoqda.</b>\n\n"
-                    "📞 Call center xodimimiz tez orada siz va usta o'rtasida "
-                    "aloqani ta'minlaydi.\n\n"
+                    f"🚦 <b>{xodim_ism}</b> {xodim_tavsif}!\n\n"
+                    + ("📞 Call center xodimimiz tez orada siz va "
+                       f"{xodim_turi.split(' ')[-1].lower()} o'rtasidagi aloqani "
+                       "mustahkamlaydi va jarayonni oxirigacha kuzatib boradi.\n\n"
+                       if xodim_turi != "📞 Operator" else
+                       "📞 U tez orada sizga qo'ng'iroq qiladi yoki shu bot orqali yozadi.\n\n") +
                     "🌟 <b>MOTUS — Harakatni davom ettiramiz!</b>"
                 ),
                 parse_mode="HTML"
@@ -3411,6 +3463,7 @@ def main():
     )
     app.add_handler(admin_reject_conv)
     app.add_handler(ariza_direct_conv)
+    app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern="^noop$"))
     app.add_handler(CallbackQueryHandler(status_callback,        pattern="^st_"))
     app.add_handler(CallbackQueryHandler(xodim_accept_callback,  pattern="^acc_"))
     app.add_handler(CallbackQueryHandler(rate_callback,          pattern="^rate_"))
